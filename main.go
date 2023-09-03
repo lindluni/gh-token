@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -36,8 +37,14 @@ func main() {
 					&cli.StringFlag{
 						Name:     "key",
 						Usage:    "Path to private key",
-						Required: true,
+						Required: false,
 						Aliases:  []string{"k"},
+					},
+					&cli.StringFlag{
+						Name:     "key-base64",
+						Usage:    "A base64 encoded private key",
+						Required: false,
+						Aliases:  []string{"b"},
 					},
 					&cli.BoolFlag{
 						Name:    "export-actions",
@@ -80,15 +87,35 @@ func run(c *cli.Context) error {
 	appID := c.String("app-id")
 	installationID := c.String("installation-id")
 	keyPath := c.String("key")
+	keyBase64 := c.String("key-base64")
 	exportActions := c.Bool("export-actions")
 	exportVarName := c.String("export-var-name")
 	tokenOnly := c.Bool("token-only")
 	silent := c.Bool("silent")
-	key, err := readKey(keyPath)
-	if err != nil {
-		return err
+
+	if keyPath == "" && keyBase64 == "" {
+		return fmt.Errorf("either --key or --key-base64 must be specified")
 	}
-	jsonWebToken, err := generateJWT(appID, key)
+
+	if keyPath != "" && keyBase64 != "" {
+		return fmt.Errorf("only one of --key or --key-base64 may be specified")
+	}
+
+	var err error
+	var privateKey *rsa.PrivateKey
+	if keyPath != "" {
+		privateKey, err = readKey(keyPath)
+		if err != nil {
+			return err
+		}
+	} else {
+		privateKey, err = readKeyBase64(keyBase64)
+		if err != nil {
+			return err
+		}
+	}
+
+	jsonWebToken, err := generateJWT(appID, privateKey)
 	if err != nil {
 		return fmt.Errorf("failed generating JWT: %w", err)
 	}
@@ -136,6 +163,19 @@ func readKey(path string) (*rsa.PrivateKey, error) {
 	keyBytes, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read key file: %w", err)
+	}
+	key, err := jwt.ParseRSAPrivateKeyFromPEM(keyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse key from PEM to RSA format: %w", err)
+	}
+
+	return key, nil
+}
+
+func readKeyBase64(keyBase64 string) (*rsa.PrivateKey, error) {
+	keyBytes, err := base64.StdEncoding.DecodeString(keyBase64)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode key from base64: %w", err)
 	}
 	key, err := jwt.ParseRSAPrivateKeyFromPEM(keyBytes)
 	if err != nil {
