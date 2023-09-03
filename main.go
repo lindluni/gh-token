@@ -5,18 +5,20 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"time"
 
-	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/urfave/cli/v2"
 )
 
 func main() {
 	app := &cli.App{
-		Name:  "gh-token",
-		Usage: "Generate and manage GitHub App installation tokens",
+		Name:    "gh-token",
+		Usage:   "Generate and manage GitHub App installation tokens",
+		Version: "1.0.0",
 		Commands: []*cli.Command{
 			{
 				Name:  "generate",
@@ -46,6 +48,13 @@ func main() {
 						Required: false,
 						Aliases:  []string{"b"},
 					},
+					&cli.StringFlag{
+						Name:     "api-endpoint",
+						Usage:    "GitHub Enterprise Server API endpoint, example: github.example.com/api/v3",
+						Required: false,
+						Aliases:  []string{"o"},
+						Value:    "api.github.com",
+					},
 					&cli.BoolFlag{
 						Name:    "export-actions",
 						Usage:   "Export token to the GITHUB_TOKEN environment variable by writing token to the GITHUB_ENV file",
@@ -61,7 +70,7 @@ func main() {
 					&cli.BoolFlag{
 						Name:    "token-only",
 						Usage:   "Only print the token to stdout, not the full JSON response, useful for piping to other commands",
-						Aliases: []string{"o"},
+						Aliases: []string{"t"},
 						Value:   false,
 					},
 					&cli.BoolFlag{
@@ -88,6 +97,7 @@ func run(c *cli.Context) error {
 	installationID := c.String("installation-id")
 	keyPath := c.String("key")
 	keyBase64 := c.String("key-base64")
+	hostname := c.String("api-endpoint")
 	exportActions := c.Bool("export-actions")
 	exportVarName := c.String("export-var-name")
 	tokenOnly := c.Bool("token-only")
@@ -119,7 +129,7 @@ func run(c *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed generating JWT: %w", err)
 	}
-	token, err := generateToken(jsonWebToken, installationID)
+	token, err := generateToken(hostname, jsonWebToken, installationID)
 	if err != nil {
 		return fmt.Errorf("failed generating installation token: %w", err)
 	}
@@ -186,9 +196,7 @@ func readKeyBase64(keyBase64 string) (*rsa.PrivateKey, error) {
 }
 
 func generateJWT(appID string, key *rsa.PrivateKey) (string, error) {
-	// One minute ago to account for clock skew
 	sixtySecondsAgo := jwt.NewNumericDate(time.Now().Add(-60 * time.Second))
-	// One minute in the future to limit the amount of time the token is valid
 	oneMinuteInFuture := jwt.NewNumericDate(time.Now().Add(60 * time.Second))
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iat": sixtySecondsAgo,
@@ -203,26 +211,45 @@ func generateJWT(appID string, key *rsa.PrivateKey) (string, error) {
 	return signedToken, nil
 }
 
-func generateToken(jwt, installationID string) (*tokenResponse, error) {
-	client, err := api.NewRESTClient(api.ClientOptions{
-		Headers: map[string]string{
-			"Authorization": fmt.Sprintf("Bearer %s", jwt),
-		},
-	})
+func generateToken(hostname, jwt, installationID string) (*tokenResponse, error) {
+	endpoint := fmt.Sprintf("https://%s/app/installations/%s/access_tokens", hostname, installationID)
+	req, err := http.NewRequest("POST", endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("unable to create REST client: %w", err)
+		return nil, fmt.Errorf("unable to create POST request to %s: %w", endpoint, err)
 	}
-	var response *tokenResponse
-	endpoint := fmt.Sprintf("app/installations/%s/access_tokens", installationID)
-	err = client.Post(endpoint, nil, &response)
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", jwt))
+	req.Header.Add("Accept", "application/vnd.github+json")
+	req.Header.Add("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Add("User-Agent", "lindluni/gh-token")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("unable to send POST request to %s: %w", endpoint, err)
+		return nil, fmt.Errorf("unable to POST to %s: %w", endpoint, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 201 {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var response *tokenResponse
+	bytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read response body: %w", err)
+	}
+
+	err = json.Unmarshal(bytes, &response)
+	if err != nil {
+		return nil, fmt.Errorf("unable to unmarshal response body: %w", err)
 	}
 
 	return response, nil
 }
 
 type tokenResponse struct {
-	Value     string `json:"token"`
-	ExpiresAt string `json:"expires_at"`
+	Value               string            `json:"token"`
+	ExpiresAt           string            `json:"expires_at"`
+	Permissions         map[string]string `json:"permissions"`
+	RepositorySelection string            `json:"repository_selection"`
 }
