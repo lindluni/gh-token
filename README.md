@@ -22,7 +22,7 @@ gh extension upgrade lindluni/gh-token
 
 ### Generate a token
 
-```
+```shell
 $ gh token generate                                                                                                                                          ✔  2.5.5   03:14:59 PM 
 NAME:
    gh-token generate - Generate a new GitHub App installation token
@@ -32,7 +32,7 @@ USAGE:
 
 OPTIONS:
    --app-id value, -a value           GitHub App ID
-   --installation-id value, -i value  GitHub App ID
+   --installation-id value, -i value  GitHub App Installation ID
    --key value, -k value              Path to private key
    --key-base64 value, -b value       A base64 encoded private key
    --hostname value, -o value         GitHub Enterprise Server hostname (default: "github.com")
