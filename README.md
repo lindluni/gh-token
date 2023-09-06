@@ -22,7 +22,7 @@ gh extension upgrade lindluni/gh-token
 
 ### Generate a token
 
-```shell
+```
 $ gh token generate                                                                                                                                          ✔  2.5.5   03:14:59 PM 
 NAME:
    gh-token generate - Generate a new GitHub App installation token
