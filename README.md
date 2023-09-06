@@ -35,7 +35,7 @@ OPTIONS:
    --installation-id value, -i value  GitHub App Installation ID
    --key value, -k value              Path to private key
    --key-base64 value, -b value       A base64 encoded private key
-   --hostname value, -o value         GitHub Enterprise Server hostname (default: "api.github.com")
+   --api-endpoint value, -o value     GitHub Enterprise Server hostname (default: "api.github.com")
    --export-actions, -e               Export token to the GITHUB_TOKEN environment variable by writing token to the GITHUB_ENV file (default: false)
    --export-var-name value, -v value  Override the default environment variable name to export the token to when using --export-actions (default: "GITHUB_TOKEN")
    --token-only, -t                   Only print the token to stdout, not the full JSON response, useful for piping to other commands (default: false)
