@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -79,6 +81,18 @@ func main() {
 						Aliases: []string{"s"},
 						Value:   false,
 					},
+					&cli.StringSliceFlag{
+						Name:    "repository",
+						Usage:   "A list of repositories to grant access to",
+						Aliases: []string{"r"},
+						Value:   cli.NewStringSlice(),
+					},
+					&cli.StringFlag{
+						Name:    "permissions",
+						Usage:   "A list of permissions to grant access to seprated by semicolons, e.g. repo:issue:write;repo:contents:read",
+						Aliases: []string{"p"},
+						Value:   "",
+					},
 				},
 				Action: run,
 			},
@@ -102,6 +116,9 @@ func run(c *cli.Context) error {
 	exportVarName := c.String("export-var-name")
 	tokenOnly := c.Bool("token-only")
 	silent := c.Bool("silent")
+	repositories := c.StringSlice("repository")
+	permissions := c.String("permissions")
+	var err error
 
 	if keyPath == "" && keyBase64 == "" {
 		return fmt.Errorf("either --key or --key-base64 must be specified")
@@ -129,7 +146,7 @@ func run(c *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed generating JWT: %w", err)
 	}
-	token, err := generateToken(hostname, jsonWebToken, installationID)
+	token, err := generateToken(hostname, jsonWebToken, installationID, permissions, repositories)
 	if err != nil {
 		return fmt.Errorf("failed generating installation token: %w", err)
 	}
@@ -211,9 +228,24 @@ func generateJWT(appID string, key *rsa.PrivateKey) (string, error) {
 	return signedToken, nil
 }
 
-func generateToken(hostname, jwt, installationID string) (*tokenResponse, error) {
+func generateToken(hostname, jwt, installationID, permissions string, repositories []string) (*tokenResponse, error) {
 	endpoint := fmt.Sprintf("https://%s/app/installations/%s/access_tokens", hostname, installationID)
-	req, err := http.NewRequest("POST", endpoint, nil)
+	var err error
+	var body io.Reader
+
+	if len(repositories) > 0 {
+		byteData, err := json.MarshalIndent(map[string]interface{}{
+			"permissions":  parsePermissions(permissions),
+			"repositories": repositories,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("unable to marshal repositories to JSON: %w", err)
+		}
+
+		body = bytes.NewReader(byteData)
+	}
+
+	req, err := http.NewRequest("POST", endpoint, body)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create POST request to %s: %w", endpoint, err)
 	}
@@ -247,9 +279,24 @@ func generateToken(hostname, jwt, installationID string) (*tokenResponse, error)
 	return response, nil
 }
 
+func parsePermissions(permissions string) map[string]string {
+	perms := map[string]string{}
+	if permissions == "" {
+		return perms
+	}
+
+	split := strings.Split(permissions, ":")
+	for i := 0; i < len(split); i += 2 {
+		perms[split[i]] = split[i+1]
+	}
+
+	return perms
+}
+
 type tokenResponse struct {
-	Value               string            `json:"token"`
-	ExpiresAt           string            `json:"expires_at"`
-	Permissions         map[string]string `json:"permissions"`
-	RepositorySelection string            `json:"repository_selection"`
+	Value               string                   `json:"token"`
+	ExpiresAt           string                   `json:"expires_at"`
+	Permissions         map[string]string        `json:"permissions"`
+	RepositorySelection string                   `json:"repository_selection"`
+	Repositories        []map[string]interface{} `json:"repositories"`
 }
